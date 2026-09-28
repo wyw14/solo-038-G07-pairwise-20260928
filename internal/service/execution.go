@@ -17,6 +17,7 @@ import (
 	"github.com/wyw14/solo-038/internal/sensor"
 	"github.com/wyw14/solo-038/internal/splice"
 	"github.com/wyw14/solo-038/internal/unwind"
+	"github.com/wyw14/solo-038/internal/wash"
 	"github.com/wyw14/solo-038/internal/web"
 )
 
@@ -216,7 +217,8 @@ func (runtime *Runtime) switchInkOperation(withFault bool) error {
 	if active == next {
 		next = "cyan"
 	}
-	if _, err := runtime.inkControl.SwitchColor(next); err != nil {
+	transition, err := runtime.inkControl.SwitchColor(next)
+	if err != nil {
 		return err
 	}
 	if err := runtime.press.SetColor(next); err != nil {
@@ -226,9 +228,37 @@ func (runtime *Runtime) switchInkOperation(withFault bool) error {
 	if len(colors) < 2 || !ink.ActiveCircuitReady(runtime.ink, next) {
 		return fmt.Errorf("ink circuit did not become ready")
 	}
-	return ink.RequireReady(runtime.ink, active)
+	if err := ink.RequireReady(runtime.ink, active); err != nil {
+		return err
+	}
+	// Register the changeover in the wash ledger so the purge cycle's fluid
+	// replenish/recovered/waste weigh-ins can be booked and reconciled against
+	// this specific color switch.
+	return runtime.recordWashSwitch(active, next, transition)
 }
 
+// recordWashSwitch durably logs one completed color change as a wash-ledger
+// switch. The drained (from-color) circuit is the route being purged, so it is
+// used as the ledger circuit key.
+func (runtime *Runtime) recordWashSwitch(from, to string, transition ink.Transition) error {
+	current, _ := runtime.jobs.Current()
+	now := time.Now().UTC()
+	event := wash.Switch{
+		ID:         wash.NewSwitchID(),
+		Circuit:    from,
+		FromColor:  transition.From,
+		ToColor:    transition.To,
+		JobID:      string(current.ID),
+		Drained:    transition.Drained,
+		Opened:     transition.Opened,
+		OccurredAt: now,
+		RecordedAt: now,
+	}
+	if _, err := runtime.wash.RecordSwitch(&event); err != nil {
+		return err
+	}
+	return nil
+}
 func (runtime *Runtime) startDryerOperation(ctx context.Context, current model.Job) error {
 	profile := dryer.Profile{Name: "production", Zones: []dryer.Zone{{Name: "entry", Temperature: 80, Airflow: 20}, {Name: "exit", Temperature: 100, Airflow: 24}}}
 	if profile.MaximumTemperature() <= 0 || profile.AverageAirflow() <= 0 {

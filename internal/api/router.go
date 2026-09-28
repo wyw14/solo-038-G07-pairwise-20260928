@@ -25,6 +25,12 @@ func NewRouter(runtime *service.Runtime) http.Handler {
 		api.Get("/incidents", handler.incidents)
 		api.Get("/recovery", handler.recoveryStatus)
 		api.Post("/jobs/current/cancel", handler.cancelCurrent)
+		api.Route("/wash-ledger", func(ledger chi.Router) {
+			ledger.Get("/", handler.washLedger)
+			ledger.Get("/switches/{switchID}", handler.washSwitch)
+			ledger.Post("/weighings", handler.recordWeighing)
+			ledger.Post("/corrections", handler.correctWeighing)
+		})
 	})
 	return router
 }
