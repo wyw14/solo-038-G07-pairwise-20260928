@@ -52,9 +52,9 @@ func (runtime *Runtime) ExecuteOperation(ctx context.Context, kind string) error
 	case "adjust_phase":
 		return runtime.registerOperation(current)
 	case "switch_ink":
-		return runtime.switchInkOperation(false)
+		return runtime.switchInkOperation(current, false)
 	case "ink_fault":
-		return runtime.switchInkOperation(true)
+		return runtime.switchInkOperation(current, true)
 	case "start_dryer":
 		return runtime.startDryerOperation(ctx, current)
 	case "release_interval":
@@ -198,7 +198,7 @@ func (runtime *Runtime) registerOperation(current model.Job) error {
 	return err
 }
 
-func (runtime *Runtime) switchInkOperation(withFault bool) error {
+func (runtime *Runtime) switchInkOperation(current model.Job, withFault bool) error {
 	active := runtime.inkControl.Active()
 	if active == "" {
 		if err := runtime.inkControl.Activate("cyan"); err != nil {
@@ -216,7 +216,11 @@ func (runtime *Runtime) switchInkOperation(withFault bool) error {
 	if active == next {
 		next = "cyan"
 	}
-	if _, err := runtime.inkControl.SwitchColor(next); err != nil {
+	transition, err := runtime.inkControl.SwitchColor(next)
+	if err != nil {
+		return err
+	}
+	if err := runtime.recordWashupSwitch(string(current.ID), transition.From, transition.To); err != nil {
 		return err
 	}
 	if err := runtime.press.SetColor(next); err != nil {
